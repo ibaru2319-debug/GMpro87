@@ -1,0 +1,41 @@
+name: Build ESP8266 SDK 2.0.0
+
+on: [push, pull_request]
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Arduino CLI
+        uses: arduino/setup-arduino-cli@v1
+
+      - name: Install ESP8266 Core v2.0.0
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls http://arduino.esp8266.com/stable/package_esp8266com_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp8266:esp8266@2.0.0
+
+      - name: Compile Sketch
+        run: |
+          # Mencari file .ino pertama yang ditemukan
+          INO_FILE=$(find . -name "*.ino" | head -n 1)
+          SKETCH_PATH=$(dirname "$INO_FILE")
+          
+          echo "Menemukan file: $INO_FILE"
+          echo "Menjalankan compile di folder: $SKETCH_PATH"
+          
+          mkdir -p ./build
+          
+          # Compile menggunakan folder tempat file .ino berada
+          arduino-cli compile --fqbn esp8266:esp8266:d1_mini --output-dir ./build "$SKETCH_PATH"
+
+      - name: Upload Binary Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Firmware-GMpro87
+          path: ./build/*.bin
