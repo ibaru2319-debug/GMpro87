@@ -1,47 +1,26 @@
-name: Build ESP8266 SDK 2.0.0
+name: Build GMpro V3.9
 
-on: [push, pull_request]
+on: [push]
 
 jobs:
   compile:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Setup Arduino CLI
-        uses: arduino/setup-arduino-cli@v1
-
-      - name: Install ESP8266 Core v2.0.0
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-arduino-cli@v1
+      - name: Install Core & Libs
         run: |
           arduino-cli config init
           arduino-cli config add board_manager.additional_urls http://arduino.esp8266.com/stable/package_esp8266com_index.json
           arduino-cli core update-index
-          # Memaksa instalasi SDK versi 2.0.0
           arduino-cli core install esp8266:esp8266@2.0.0
-
-      - name: Install OLED Libraries
+          arduino-cli lib install "ESP8266 and ESP32 OLED driver for SSD1306 displays"
+      - name: Build
         run: |
-          # Menginstal library yang dibutuhkan agar tidak error "No such file or directory"
-          arduino-cli lib install "Adafruit SSD1306"
-          arduino-cli lib install "Adafruit GFX Library"
-          arduino-cli lib install "Adafruit BusIO"
-
-      - name: Compile Sketch
-        run: |
-          # Otomatis mencari folder yang berisi file .ino
-          SKETCH_PATH=$(find . -name "*.ino" | head -n 1 | xargs dirname)
-          echo "Menemukan sketsa di: $SKETCH_PATH"
-          
-          # Membuat folder output
           mkdir -p ./build
-          
-          # Proses Compile untuk Wemos D1 Mini (FQBN: esp8266:esp8266:d1_mini)
-          arduino-cli compile --fqbn esp8266:esp8266:d1_mini --output-dir ./build "$SKETCH_PATH"
-
-      - name: Upload Binary Artifact
+          arduino-cli compile --fqbn esp8266:esp8266:d1_mini --output-dir ./build .
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: Firmware-GMpro-Nethercap-OLED
+          name: GMpro-V3.9-Final
           path: ./build/*.bin
