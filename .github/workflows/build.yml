@@ -20,22 +20,19 @@ jobs:
           arduino-cli core update-index
           arduino-cli core install esp8266:esp8266@2.0.0
 
-      - name: Install Compatible OLED Libraries
+      - name: Install Lightweight OLED Library
         run: |
-          # Menggunakan versi lama agar cocok dengan SDK 2.0.0
-          arduino-cli lib install "Adafruit GFX Library@1.10.10"
-          arduino-cli lib install "Adafruit SSD1306@2.4.6"
-          arduino-cli lib install "Adafruit BusIO@1.7.3"
+          # Menggunakan library ThingPulse yang lebih kompatibel dengan SDK tua
+          arduino-cli lib install "ESP8266 and ESP32 OLED driver for SSD1306 displays"
 
       - name: Compile Sketch
         run: |
           SKETCH_PATH=$(find . -name "*.ino" | head -n 1 | xargs dirname)
           mkdir -p ./build
-          # Tambahkan flag --warnings none jika perlu untuk mengurangi log error
           arduino-cli compile --fqbn esp8266:esp8266:d1_mini --output-dir ./build "$SKETCH_PATH"
 
       - name: Upload Binary Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Firmware-GMpro-Final-Fix
+          name: Firmware-GMpro-SDK200-OLED-Fixed
           path: ./build/*.bin
