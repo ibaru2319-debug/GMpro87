@@ -1,0 +1,36 @@
+name: Build ESP8266 SDK 2.0.0
+
+on: [push]
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Arduino CLI
+        uses: arduino/setup-arduino-cli@v1
+
+      - name: Install ESP8266 Core
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls http://arduino.esp8266.com/stable/package_esp8266com_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp8266:esp8266@2.0.0
+
+      - name: Install OLED Library
+        run: |
+          # Library khusus SDK lama agar tidak error SPI
+          arduino-cli lib install "ESP8266 and ESP32 OLED driver for SSD1306 displays"
+
+      - name: Compile Sketch
+        run: |
+          mkdir -p ./build
+          arduino-cli compile --fqbn esp8266:esp8266:d1_mini --output-dir ./build .
+
+      - name: Upload Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: GMpro-V3.9-Final
+          path: ./build/*.bin
